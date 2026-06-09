@@ -1,0 +1,49 @@
+{
+  "name": "steel-production-system",
+  "version": "1.0.0",
+  "description": "大型钢铁企业炼钢-连铸-轧制一体化生产调度与质量追溯桌面系统",
+  "main": "main.js",
+  "scripts": {
+    "dev": "electron .",
+    "build": "electron-builder",
+    "start:web": "vite",
+    "build:web": "vite build"
+  },
+  "author": "Steel Enterprise",
+  "license": "MIT",
+  "dependencies": {
+    "dayjs": "^1.11.10",
+    "echarts": "^5.5.0",
+    "echarts-for-react": "^3.0.2",
+    "jspdf": "^2.5.1",
+    "jspdf-autotable": "^3.8.2",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.22.0",
+    "recharts": "^2.12.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.55",
+    "@types/react-dom": "^18.2.19",
+    "@vitejs/plugin-react": "^4.2.1",
+    "electron": "^28.2.0",
+    "electron-builder": "^24.9.1",
+    "vite": "^5.1.0"
+  },
+  "build": {
+    "appId": "com.steel.production",
+    "productName": "钢铁生产调度系统",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "dist-web/**/*",
+      "preload.js",
+      "server/**/*"
+    ],
+    "win": {
+      "target": "nsis"
+    }
+  }
+}
