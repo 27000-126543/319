@@ -4,7 +4,8 @@
   "description": "大型钢铁企业炼钢-连铸-轧制一体化生产调度与质量追溯桌面系统",
   "main": "main.js",
   "scripts": {
-    "dev": "electron .",
+    "dev": "concurrently -k -n VITE,ELECTRON -c blue,green \"npm:start:web\" \"npm:wait-electron\"",
+    "wait-electron": "wait-on tcp:5173 && electron .",
     "build": "electron-builder",
     "start:web": "vite",
     "build:web": "vite build"
@@ -26,9 +27,11 @@
     "@types/react": "^18.2.55",
     "@types/react-dom": "^18.2.19",
     "@vitejs/plugin-react": "^4.2.1",
+    "concurrently": "^8.2.2",
     "electron": "^28.2.0",
     "electron-builder": "^24.9.1",
-    "vite": "^5.1.0"
+    "vite": "^5.1.0",
+    "wait-on": "^7.2.0"
   },
   "build": {
     "appId": "com.steel.production",
