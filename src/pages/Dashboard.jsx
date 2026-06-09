@@ -1,359 +1,491 @@
-import React, { useState, useEffect } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  LineChart, Line, PieChart, Pie, Cell, ResponsiveContainer, AreaChart, Area } from 'recharts';
-import { query } from '../utils/api.js';
-import { formatDateTime, formatNumber, todayStr, getEqTypeLabel, getStatusDot } from '../utils/format.js';
+import React, { useState, useEffect, useMemo } from 'react';
+import { query, list, findAll, getSteelKpiDashboard, resetSteelDatabase } from '../utils/api.js';
 
-const COLORS = ['#1890ff', '#52c41a', '#faad14', '#ff4d4f', '#13c2c2', '#722ed1', '#eb2f96'];
+const todayISO = () => new Date().toISOString().slice(0, 10);
 
-const dailyOutputData = [
-  { date: '06-03', 产量: 2850, 合格: 2780, 能耗: 185 },
-  { date: '06-04', 产量: 2920, 合格: 2860, 能耗: 190 },
-  { date: '06-05', 产量: 2780, 合格: 2710, 能耗: 182 },
-  { date: '06-06', 产量: 3010, 合格: 2950, 能耗: 195 },
-  { date: '06-07', 产量: 2980, 合格: 2920, 能耗: 188 },
-  { date: '06-08', 产量: 3050, 合格: 2995, 能耗: 192 },
-  { date: '06-09', 产量: 2680, 合格: 2640, 能耗: 175 }
-];
+export default function Dashboard({ user }) {
+  const [kpi, setKpi] = useState(null);
+  const [equips, setEquips] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [heats, setHeats] = useState([]);
+  const [quality, setQuality] = useState([]);
+  const [materials, setMaterials] = useState([]);
+  const [showReset, setShowReset] = useState(false);
 
-const steelGradeData = [
-  { name: 'Q235B', value: 3500, rate: '28.6%' },
-  { name: 'DC01', value: 2800, rate: '22.9%' },
-  { name: 'SPHC', value: 2200, rate: '18.0%' },
-  { name: 'AH32', value: 1500, rate: '12.3%' },
-  { name: 'HC340LA', value: 1200, rate: '9.8%' },
-  { name: 'ST14', value: 1050, rate: '8.6%' }
-];
+  const refresh = () => {
+    setKpi(getSteelKpiDashboard());
+    setEquips(list('equipment'));
+    setOrders(list('sales_orders', 'created_at DESC', 6));
+    setHeats(list('production_heats', 'start_time DESC', 6));
+    setQuality(list('quality_records', 'inspection_time DESC', 8));
+    setMaterials(findAll('materials', null, 'stock ASC').filter(m => m.stock <= m.safe_stock).slice(0, 5));
+  };
+  useEffect(refresh, []);
 
-const energyData = [
-  { time: '00', 电耗: 1200, 气耗: 850, 水耗: 320 },
-  { time: '04', 电耗: 950, 气耗: 680, 水耗: 280 },
-  { time: '08', 电耗: 1800, 气耗: 1250, 水耗: 450 },
-  { time: '12', 电耗: 2100, 气耗: 1480, 水耗: 520 },
-  { time: '16', 电耗: 2050, 气耗: 1420, 水耗: 510 },
-  { time: '20', 电耗: 1650, 气耗: 1150, 水耗: 420 }
-];
-
-const equipmentStatus = [
-  { id: 1, name: '1号转炉', type: 'converter', status: '运行中', temp: 1650, progress: 68 },
-  { id: 2, name: '2号转炉', type: 'converter', status: '运行中', temp: 1580, progress: 42 },
-  { id: 3, name: '3号转炉', type: 'converter', status: '维护中', temp: 0, progress: 0 },
-  { id: 4, name: 'RH精炼炉', type: 'refinery', status: '运行中', temp: 1620, progress: 75 },
-  { id: 5, name: 'LF精炼炉', type: 'refinery', status: '空闲', temp: 0, progress: 0 },
-  { id: 6, name: '1号连铸机', type: 'caster', status: '运行中', temp: 1540, progress: 55 },
-  { id: 7, name: '2号连铸机', type: 'caster', status: '运行中', temp: 1520, progress: 38 },
-  { id: 8, name: '1号热轧机', type: 'rolling_mill', status: '运行中', temp: 1100, progress: 82 },
-  { id: 9, name: '2号热轧机', type: 'rolling_mill', status: '空闲', temp: 0, progress: 0 },
-  { id: 10, name: '1号冷轧机', type: 'rolling_mill_cold', status: '运行中', temp: 45, progress: 62 },
-  { id: 11, name: '2号冷轧机', type: 'rolling_mill_cold', status: '运行中', temp: 52, progress: 48 }
-];
-
-const recentAlerts = [
-  { id: 1, type: '质量报警', level: 'danger', content: '炉次H240609003碳含量超标: 0.22% (标准≤0.20%)', time: '14:32:15', heat: 'H240609003' },
-  { id: 2, type: '库存预警', level: 'warning', content: '中间包库存低于安全库存 (50/10)', time: '14:15:42', heat: '-' },
-  { id: 3, type: '设备预警', level: 'warning', content: '1号转炉振动值偏高: 4.2mm/s', time: '13:58:20', heat: 'H240609002' },
-  { id: 4, type: '质量报警', level: 'danger', content: '炉次H240609001终轧温度偏低', time: '12:45:08', heat: 'H240609001' },
-  { id: 5, type: '调整申请', level: 'info', content: '李炼钢申请调整2号转炉排程', time: '11:30:55', heat: '-' }
-];
-
-const activeHeats = [
-  { heat_no: 'H240609012', stage: '吹炼中', converter: '1号转炉', grade: 'Q235B', weight: 120, progress: 68, start: '14:15' },
-  { heat_no: 'H240609011', stage: '精炼中', caster: 'RH精炼炉', grade: 'DC01', weight: 118, progress: 75, start: '13:40' },
-  { heat_no: 'H240609010', stage: '连铸中', caster: '1号连铸机', grade: 'Q235B', weight: 115, progress: 55, start: '12:50' },
-  { heat_no: 'H240609009', stage: '热轧中', mill: '1号热轧机', grade: 'SPHC', weight: 112, progress: 82, start: '11:20' },
-  { heat_no: 'H240609008', stage: '冷轧中', mill: '1号冷轧机', grade: 'DC01', weight: 108, progress: 62, start: '09:45' },
-  { heat_no: 'H240609007', stage: '质量锁定', grade: 'HC340LA', weight: 110, progress: 100, start: '08:10' }
-];
-
-function Dashboard({ user }) {
-  const [stats, setStats] = useState({
-    todayOutput: 2680,
-    todayQualified: 2640,
-    pendingOrders: 18,
-    runningEquip: 8,
-    totalEquip: 11,
-    energyConsumption: 18560,
-    maintenanceOrders: 5,
-    qualityAlerts: 3
-  });
-
-  const [heats, setHeats] = useState(activeHeats);
-  const [equips, setEquips] = useState(equipmentStatus);
-
-  useEffect(() => {
-    loadData();
-    const interval = setInterval(updateRealtime, 5000);
-    return () => clearInterval(interval);
+  const last7Days = useMemo(() => {
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - 6 + i);
+      const iso = `${d.getMonth() + 1}/${d.getDate()}`;
+      const seed = (d.getDate() * 13) % 100;
+      return {
+        date: iso,
+        output: 220 + seed,
+        qual: 96 + ((seed * 3) % 40) / 10,
+        energy: 15000 + ((seed * 7) % 6000)
+      };
+    });
   }, []);
 
-  const loadData = async () => {
-    try {
-      const eqList = await query('SELECT * FROM equipment ORDER BY code');
-      if (eqList && eqList.length > 0) {
-        setEquips(eqList);
-      }
-    } catch (e) {
-      console.log('Using demo data');
-    }
-  };
+  const gradeDist = useMemo(() => {
+    const groups = {};
+    (list('sales_orders') || []).forEach(o => {
+      groups[o.steel_grade] = (groups[o.steel_grade] || 0) + (o.quantity || 0);
+    });
+    const entries = Object.entries(groups).sort((a, b) => b[1] - a[1]).slice(0, 6);
+    const total = entries.reduce((s, [, v]) => s + v, 0) || 1;
+    const colors = ['#1e40af', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2'];
+    return entries.map(([g, v], i) => ({ grade: g, weight: v, pct: Math.round(v / total * 1000) / 10, color: colors[i % colors.length] }));
+  }, [kpi]);
 
-  const updateRealtime = () => {
-    setHeats(prev => prev.map(h => ({
-      ...h,
-      progress: h.stage !== '质量锁定' ? Math.min(100, h.progress + Math.random() * 2) : h.progress
-    })));
-  };
+  const maxOut = Math.max(...last7Days.map(d => d.output));
+  const maxEnergy = Math.max(...last7Days.map(d => d.energy));
 
-  const qualifiedRate = ((stats.todayQualified / stats.todayOutput) * 100).toFixed(1);
-  const equipUtilization = ((stats.runningEquip / stats.totalEquip) * 100).toFixed(1);
+  if (!kpi) return <div style={{ padding: 60, textAlign: 'center', color: '#6b7280' }}>🔄 钢铁生产KPI数据加载中...</div>;
+
+  const kpiCards = [
+    { label: '今日产量', value: `${kpi.today_output}`, unit: '吨', change: '+2.8%', trend: 'up', color: '#1e40af', icon: '📦', sub: `本月累计 ${kpi.today_output * 26} 吨` },
+    { label: '综合合格率', value: kpi.today_quality_rate, unit: '%', change: '+0.5%', trend: 'up', color: '#059669', icon: '✅', sub: '目标 ≥97%' },
+    { label: '待排程订单', value: kpi.pending_orders, unit: '笔', change: `共${kpi.pending_orders_weight}吨`, trend: '', color: '#d97706', icon: '📅', sub: '待智能排程分配产能' },
+    { label: '设备利用率', value: kpi.equipment_utilization, unit: '%', change: `${kpi.equipment_running}/${kpi.equipment_total}台运行`, trend: '', color: '#7c3aed', icon: '🏭', sub: '目标OEE≥85%' },
+    { label: '今日能耗', value: kpi.today_energy, unit: 'kWh', change: '-3.2%', trend: 'down', color: '#0891b2', icon: '⚡', sub: '吨钢能耗 约69kWh/t' },
+    { label: '在制炉次', value: kpi.in_progress_heats, unit: '炉', change: `3炉待开始`, trend: '', color: '#be123c', icon: '🔥', sub: '吹炼/精炼/连铸并行中' },
+    { label: '待处理维保', value: kpi.pending_maintenance, unit: '单', change: `2单紧急`, trend: '', color: '#ea580c', icon: '🔧', sub: '2号转炉液压渗漏紧急' },
+    { label: '质量报警', value: `${kpi.quality_alarms}`, unit: '条', change: `${kpi.locked_heats}炉锁定待处`, trend: 'up', color: '#dc2626', icon: '⚠️', sub: 'HEAT-005 S超标锁定🔒' }
+  ];
 
   return (
-    <div style={{ minHeight: '100%' }}>
-      <div className="grid-4 mb-20">
-        <div className="stat-card primary">
-          <div className="stat-label">今日产量</div>
-          <div className="stat-value">{stats.todayOutput}<span className="stat-unit">吨</span></div>
-          <div className="stat-change up">↑ 2.8% 较昨日</div>
+    <div>
+      {/* 顶部欢迎条 */}
+      <div style={{
+        padding: '18px 22px', marginBottom: 22, borderRadius: 12,
+        background: 'linear-gradient(135deg, #1e3a6f 0%, #2c5282 50%, #1e40af 100%)',
+        color: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        flexWrap: 'wrap', gap: 12
+      }}>
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }}>
+            👋 欢迎，{user?.name || '钢铁调度员'}！今天是 {todayISO()}
+          </div>
+          <div style={{ fontSize: 13, opacity: 0.9 }}>
+            🏭 大型钢铁企业炼钢-连铸-轧制一体化生产调度系统 · 您的角色具有：{
+              user?.role === 'admin' ? '全系统管理权限' :
+              user?.role === 'minister' ? '排程审批 + 报表 + 质量解锁' :
+              user?.role === 'inspector' ? '质检数据录入 + 炉次追溯' :
+              user?.role === 'maintenance' ? '设备维保工单处理' :
+              '操作权限：排程确认 + 工序上报'
+            }
+          </div>
         </div>
-        <div className="stat-card success">
-          <div className="stat-label">合格率</div>
-          <div className="stat-value">{qualifiedRate}<span className="stat-unit">%</span></div>
-          <div className="stat-change up">↑ 0.5% 较昨日</div>
-        </div>
-        <div className="stat-card warning">
-          <div className="stat-label">待排程订单</div>
-          <div className="stat-value">{stats.pendingOrders}<span className="stat-unit">笔</span></div>
-          <div className="stat-change" style={{ color: '#999' }}>共需排产 8,670 吨</div>
-        </div>
-        <div className="stat-card info">
-          <div className="stat-label">设备利用率</div>
-          <div className="stat-value">{equipUtilization}<span className="stat-unit">%</span></div>
-          <div className="stat-change" style={{ color: '#999' }}>{stats.runningEquip}/{stats.totalEquip} 台运行</div>
-        </div>
-        <div className="stat-card danger">
-          <div className="stat-label">能耗 (今日)</div>
-          <div className="stat-value">{formatNumber(stats.energyConsumption, 0)}<span className="stat-unit">kWh</span></div>
-          <div className="stat-change down">↓ 3.2% 较昨日</div>
-        </div>
-        <div className="stat-card orange">
-          <div className="stat-label">在制炉次</div>
-          <div className="stat-value">{heats.filter(h => !h.stage.includes('锁定') && !h.stage.includes('完成')).length}<span className="stat-unit">炉</span></div>
-          <div className="stat-change" style={{ color: '#999' }}>3 炉待开始</div>
-        </div>
-        <div className="stat-card primary">
-          <div className="stat-label">待处理维保</div>
-          <div className="stat-value">{stats.maintenanceOrders}<span className="stat-unit">单</span></div>
-          <div className="stat-change" style={{ color: '#faad14' }}>⚠ 2 单紧急</div>
-        </div>
-        <div className="stat-card danger">
-          <div className="stat-label">质量报警</div>
-          <div className="stat-value">{stats.qualityAlerts}<span className="stat-unit">条</span></div>
-          <div className="stat-change down">1 炉锁定待处理</div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button onClick={refresh}
+            style={{ padding: '9px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', background: '#fff', color: '#1e40af', fontWeight: 600, fontSize: 12 }}>
+            ↻ 刷新数据
+          </button>
+          <button onClick={() => setShowReset(true)}
+            style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid #fca5a5', cursor: 'pointer', background: 'rgba(255,255,255,0.08)', color: '#fecaca', fontWeight: 500, fontSize: 12 }}>
+            🔄 重置演示数据库
+          </button>
         </div>
       </div>
 
-      <div className="grid-2 mb-20">
-        <div className="card">
-          <div className="card-header">
-            <span className="card-title">📊 近7天产量与合格率趋势</span>
-          </div>
-          <div className="card-body">
-            <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={dailyOutputData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                <YAxis yAxisId="left" tick={{ fontSize: 12 }} />
-                <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12 }} />
-                <Tooltip />
-                <Legend />
-                <Bar yAxisId="left" dataKey="产量" fill="#1890ff" radius={[4, 4, 0, 0]} />
-                <Bar yAxisId="left" dataKey="合格" fill="#52c41a" radius={[4, 4, 0, 0]} />
-                <Line yAxisId="right" type="monotone" dataKey="能耗" stroke="#faad14" strokeWidth={2} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="card-header">
-            <span className="card-title">🥧 今日钢种产量分布</span>
-          </div>
-          <div className="card-body">
-            <ResponsiveContainer width="100%" height={280}>
-              <PieChart>
-                <Pie
-                  data={steelGradeData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={55}
-                  outerRadius={100}
-                  dataKey="value"
-                  label={({ name, rate }) => `${name} ${rate}`}
-                  labelLine={{ stroke: '#999' }}
-                >
-                  {steelGradeData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </div>
-
-      <div className="card mb-20">
-        <div className="card-header">
-          <span className="card-title">⚙️ 设备实时运行状态</span>
-          <span style={{ fontSize: 12, color: '#999' }}>
-            <span className="tag tag-success">运行中</span>
-            <span className="tag tag-gray" style={{ marginLeft: 8 }}>空闲</span>
-            <span className="tag tag-warning" style={{ marginLeft: 8 }}>维护中</span>
-            <span className="tag tag-danger" style={{ marginLeft: 8 }}>故障</span>
-          </span>
-        </div>
-        <div className="card-body">
-          <div className="grid-4">
-            {equips.map(eq => (
-              <div key={eq.id} className="card" style={{
-                borderLeft: `4px solid ${getStatusDot(eq.status)}`,
-                margin: 0
-              }}>
-                <div className="card-body" style={{ padding: 16 }}>
-                  <div className="flex-between mb-12">
-                    <div>
-                      <div className="font-bold">{eq.name}</div>
-                      <div style={{ fontSize: 12, color: '#999', marginTop: 2 }}>
-                        {getEqTypeLabel(eq.type)} · {eq.code}
-                      </div>
-                    </div>
-                    <span
-                      style={{
-                        display: 'inline-block',
-                        width: 10,
-                        height: 10,
-                        borderRadius: '50%',
-                        background: getStatusDot(eq.status),
-                        boxShadow: eq.status === '运行中' ? `0 0 8px ${getStatusDot(eq.status)}` : 'none'
-                      }}
-                    />
+      {/* 8个KPI卡片 */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 16, marginBottom: 24 }}>
+        {kpiCards.map((k, i) => (
+          <div key={i} style={{
+            padding: 20, background: '#fff', borderRadius: 12,
+            border: '1px solid #e5e7eb', boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+            position: 'relative', overflow: 'hidden'
+          }}>
+            <div style={{ position: 'absolute', top: -20, right: -20, width: 100, height: 100, background: `linear-gradient(135deg, ${k.color}22, transparent)`, borderRadius: '50%' }} />
+            <div style={{ position: 'relative' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+                <div>
+                  <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 6 }}>{k.label}</div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                    <span style={{ fontSize: 28, fontWeight: 700, color: k.color }}>{k.value}</span>
+                    <span style={{ fontSize: 13, color: '#9ca3af' }}>{k.unit}</span>
                   </div>
-                  {eq.status === '运行中' && (
-                    <>
-                      <div className="progress-bar mb-8">
-                        <div
-                          className="progress-bar-fill"
-                          style={{
-                            width: `${eq.progress || Math.floor(Math.random() * 80 + 20)}%`,
-                            background: eq.type.includes('cold') ? '#13c2c2' :
-                              eq.type === 'rolling_mill' ? '#52c41a' :
-                              eq.type === 'caster' ? '#1890ff' :
-                              eq.type === 'refinery' ? '#faad14' : '#ff6b35'
-                          }}
-                        />
-                      </div>
-                      <div className="flex-between" style={{ fontSize: 12, color: '#666' }}>
-                        <span>进度: {eq.progress || 45}%</span>
-                        {eq.temp > 0 && <span>温度: {eq.temp || Math.floor(Math.random() * 500 + 1100)}℃</span>}
-                      </div>
-                    </>
-                  )}
-                  {eq.status !== '运行中' && (
-                    <div style={{ fontSize: 13, color: '#999', textAlign: 'center', padding: '12px 0' }}>
-                      {eq.status === '维护中' ? '🔧 预计18:00完成' : eq.status === '故障' ? '⚠️ 等待维修' : '⏸ 等待排产'}
-                    </div>
-                  )}
                 </div>
+                <div style={{
+                  width: 40, height: 40, borderRadius: 10,
+                  background: `linear-gradient(135deg, ${k.color}, ${k.color}cc)`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 20, boxShadow: `0 4px 10px ${k.color}44`
+                }}>{k.icon}</div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, marginTop: 8 }}>
+                <span style={{
+                  padding: '2px 8px', borderRadius: 10,
+                  background: k.trend === 'up' ? '#dcfce7' : k.trend === 'down' ? '#dbeafe' : '#f3f4f6',
+                  color: k.trend === 'up' ? '#166534' : k.trend === 'down' ? '#1e40af' : '#6b7280',
+                  fontWeight: 600
+                }}>
+                  {k.trend === 'up' ? '↑' : k.trend === 'down' ? '↓' : '•'} {k.change}
+                </span>
+                <span style={{ color: '#9ca3af' }}>{k.sub}</span>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* 产量/合格率/能耗 + 钢种分布 */}
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 18, marginBottom: 24 }}>
+        <div className="card" style={{ padding: 22 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 18, alignItems: 'center' }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: '#111827' }}>近7天 产量/合格率/能耗 趋势</div>
+              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>炼钢-连铸-热轧主流程关键指标跟踪</div>
+            </div>
+            <div style={{ display: 'flex', gap: 16, fontSize: 11 }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#1e40af', fontWeight: 600 }}>
+                <span style={{ width: 12, height: 12, background: '#1e40af', borderRadius: 3, display: 'inline-block' }} />产量(吨)
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#059669', fontWeight: 600 }}>
+                <span style={{ width: 12, height: 12, background: '#059669', borderRadius: '50%', display: 'inline-block' }} />合格率(%)
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#0891b2', fontWeight: 600 }}>
+                <span style={{ width: 12, height: 3, background: '#0891b2', display: 'inline-block' }} />能耗(kWh)
+              </span>
+            </div>
+          </div>
+          <div style={{ position: 'relative', height: 240 }}>
+            {/* Y轴刻度 - 左侧 */}
+            <div style={{ position: 'absolute', top: 0, bottom: 24, left: 0, width: 52, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', fontSize: 10, color: '#9ca3af' }}>
+              {[maxOut, maxOut * 0.75, maxOut * 0.5, maxOut * 0.25, 0].map((v, i) => <span key={i} style={{ textAlign: 'right', paddingRight: 4 }}>{Math.round(v)}</span>)}
+            </div>
+            {/* 网格线 */}
+            <div style={{ position: 'absolute', top: 0, bottom: 24, left: 52, right: 52, borderLeft: '1px dashed #e5e7eb' }}>
+              {[0, 1, 2, 3, 4].map(i => (
+                <div key={i} style={{ position: 'absolute', left: 0, right: 0, top: `${i * 25}%`, borderTop: '1px dashed #f3f4f6' }} />
+              ))}
+            </div>
+            {/* 柱状图 - 产量 */}
+            <div style={{ position: 'absolute', top: 0, bottom: 24, left: 52, right: 52, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-around' }}>
+              {last7Days.map((d, i) => (
+                <div key={i} style={{ width: '11%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                  <div style={{ width: '100%', height: `${d.output / maxOut * 100}%`, background: 'linear-gradient(180deg, #2563eb, #1e40af)', borderRadius: '4px 4px 0 0', position: 'relative', minHeight: 4 }}>
+                    <div style={{ position: 'absolute', top: -16, left: '50%', transform: 'translateX(-50%)', fontSize: 10, color: '#1e40af', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                      {d.output}
+                    </div>
+                  </div>
+                  {/* 合格率折线圆点 */}
+                  <div style={{
+                    position: 'absolute', bottom: `${24 + (d.qual - 90) / 10 * (100 - 24) - 24 + 0}%`,
+                    width: 10, height: 10, borderRadius: '50%', background: '#059669',
+                    border: '2px solid #fff', boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+                  }} />
+                </div>
+              ))}
+            </div>
+            {/* X轴 */}
+            <div style={{ position: 'absolute', bottom: 0, left: 52, right: 52, display: 'flex', justifyContent: 'space-around', fontSize: 11, color: '#6b7280' }}>
+              {last7Days.map((d, i) => <span key={i}>{d.date}</span>)}
+            </div>
+            {/* Y轴刻度 - 右侧能耗 */}
+            <div style={{ position: 'absolute', top: 0, bottom: 24, right: 0, width: 52, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', fontSize: 10, color: '#9ca3af' }}>
+              {[maxEnergy, maxEnergy * 0.75, maxEnergy * 0.5, maxEnergy * 0.25, 0].map((v, i) => <span key={i}>{Math.round(v / 1000)}k</span>)}
+            </div>
+          </div>
+        </div>
+
+        <div className="card" style={{ padding: 22 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: '#111827', marginBottom: 4 }}>订单钢种分布</div>
+          <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 18 }}>按订单总量(吨)统计 TOP 6 钢种</div>
+
+          {/* 环形饼图 */}
+          <div style={{ position: 'relative', width: 170, height: 170, margin: '0 auto 18px' }}>
+            <svg width="170" height="170" viewBox="0 0 42 42">
+              <circle cx="21" cy="21" r="15.915" fill="transparent" stroke="#f3f4f6" strokeWidth="6" />
+              {(() => {
+                let offset = 25;
+                return gradeDist.map((g, i) => {
+                  const dash = g.pct * 1.26;
+                  const el = (
+                    <circle key={i} cx="21" cy="21" r="15.915" fill="transparent"
+                      stroke={g.color} strokeWidth="6"
+                      strokeDasharray={`${dash} ${126 - dash}`}
+                      strokeDashoffset={-offset}
+                      strokeLinecap="round"
+                      transform="rotate(-90 21 21)"
+                      style={{ transition: 'stroke-dasharray 0.8s ease' }}
+                    />
+                  );
+                  offset += dash;
+                  return el;
+                });
+              })()}
+            </svg>
+            <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center' }}>
+              <div style={{ fontSize: 22, fontWeight: 700, color: '#111827' }}>
+                {gradeDist.reduce((s, g) => s + g.weight, 0).toLocaleString()}
+              </div>
+              <div style={{ fontSize: 10, color: '#6b7280' }}>吨 · {gradeDist.length}钢种</div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {gradeDist.map((g, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', fontSize: 11 }}>
+                <span style={{ width: 10, height: 10, background: g.color, borderRadius: 3, marginRight: 8 }} />
+                <span style={{ fontWeight: 600, color: '#374151', width: 60 }}>{g.grade}</span>
+                <div style={{ flex: 1, height: 6, background: '#f3f4f6', borderRadius: 3, marginRight: 6, overflow: 'hidden' }}>
+                  <div style={{ width: `${g.pct * 2}%`, height: '100%', background: g.color }} />
+                </div>
+                <span style={{ color: '#6b7280', width: 46, textAlign: 'right' }}>{g.weight.toLocaleString()}t</span>
+                <span style={{ color: '#9ca3af', width: 32, textAlign: 'right' }}>{g.pct}%</span>
               </div>
             ))}
           </div>
         </div>
       </div>
 
-      <div className="grid-2 mb-20">
-        <div className="card">
-          <div className="card-header">
-            <span className="card-title">🔥 在制炉次追踪</span>
+      {/* 设备状态 + 在制炉次 */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 18, marginBottom: 24 }}>
+        <div className="card" style={{ padding: 22 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: '#111827' }}>核心生产设备 实时状态</div>
+              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
+                运行 {kpi.equipment_running} 台 / 总 {kpi.equipment_total} 台 · 利用率 {kpi.equipment_utilization}%
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 10, fontSize: 11 }}>
+              {[['运行中', '#10b981'], ['维护中', '#f59e0b'], ['停机', '#6b7280']].map(([l, c]) => (
+                <span key={l} style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#4b5563' }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: c }} />{l}
+                </span>
+              ))}
+            </div>
           </div>
-          <div className="card-body" style={{ padding: 12 }}>
-            <table>
-              <thead>
-                <tr>
-                  <th>炉次号</th>
-                  <th>工序</th>
-                  <th>钢种</th>
-                  <th>进度</th>
-                  <th>状态</th>
-                </tr>
-              </thead>
-              <tbody>
-                {heats.map(h => (
-                  <tr key={h.heat_no}>
-                    <td className="font-bold" style={{ fontFamily: 'monospace' }}>{h.heat_no}</td>
-                    <td>{h.converter || h.caster || h.mill || '-'}</td>
-                    <td><span className="tag tag-primary">{h.grade}</span></td>
-                    <td style={{ minWidth: 120 }}>
-                      <div className="flex-between" style={{ fontSize: 12, marginBottom: 4 }}>
-                        <span>{h.start}</span>
-                        <span>{Math.floor(h.progress)}%</span>
-                      </div>
-                      <div className="progress-bar">
-                        <div
-                          className="progress-bar-fill"
-                          style={{
-                            width: `${h.progress}%`,
-                            background: h.stage.includes('锁定') ? '#ff4d4f' :
-                              h.stage.includes('吹炼') ? '#ff6b35' :
-                              h.stage.includes('精炼') ? '#faad14' :
-                              h.stage.includes('连铸') ? '#1890ff' :
-                              h.stage.includes('热轧') ? '#52c41a' : '#13c2c2'
-                          }}
-                        />
-                      </div>
-                    </td>
-                    <td>
-                      <span className={`tag ${h.stage.includes('锁定') ? 'tag-danger' :
-                        h.stage.includes('吹炼') ? 'tag-primary' :
-                        h.stage.includes('热轧') || h.stage.includes('冷轧') ? 'tag-success' : 'tag-info'}`}>
-                        {h.stage}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: 10 }}>
+            {equips.map(e => {
+              const sColor = e.status === '运行中' ? '#10b981' : e.status === '维护中' ? '#f59e0b' : '#6b7280';
+              const maintRem = Math.max(0, Math.ceil((new Date(e.next_maintenance_date) - new Date()) / 86400000));
+              return (
+                <div key={e.id} style={{
+                  padding: '12px 14px', border: `1px solid ${sColor}55`, borderRadius: 10,
+                  background: `linear-gradient(135deg, ${sColor}11, #fff)`,
+                  position: 'relative'
+                }}>
+                  <div style={{ position: 'absolute', top: 12, right: 12, width: 8, height: 8, borderRadius: '50%', background: sColor,
+                    boxShadow: `0 0 8px ${sColor}`, animation: 'pulse 1.6s infinite' }} />
+                  <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 2 }}>
+                    <span style={{ color: sColor, fontWeight: 700, marginRight: 4 }}>[{e.type}]</span>
+                    {e.equip_no}
+                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#111827', marginBottom: 6 }}>{e.name}</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, fontSize: 10, color: '#6b7280' }}>
+                    <span>📍 {e.location}</span>
+                    <span>⚙️ {e.capacity}吨</span>
+                    <span>🕐 {Math.round((e.run_hours || 0) / 1000)}k小时</span>
+                    <span style={{ color: maintRem < 10 ? '#dc2626' : '#059669', fontWeight: maintRem < 10 ? 700 : 500 }}>
+                      🔧 {maintRem < 10 ? `${maintRem}天后维保` : `维保周期OK`}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 
-        <div className="card">
-          <div className="card-header">
-            <span className="card-title">📢 实时报警与通知</span>
-            <span className="tag tag-danger">{recentAlerts.filter(a => a.level === 'danger').length} 紧急</span>
-          </div>
-          <div className="card-body" style={{ padding: 0 }}>
-            <div className="timeline" style={{ padding: '8px 20px' }}>
-              {recentAlerts.map(a => (
-                <div className="timeline-item" key={a.id}>
-                  <div className={`timeline-dot ${a.level}`}>
-                    {a.level === 'danger' ? '!' : a.level === 'warning' ? '⚠' : 'ℹ'}
-                  </div>
-                  <div className="timeline-content">
-                    <div className="flex-between">
-                      <span className="timeline-title">
-                        <span className={`tag ${a.level === 'danger' ? 'tag-danger' :
-                          a.level === 'warning' ? 'tag-warning' : 'tag-info'}`}>
-                          {a.type}
-                        </span>
-                        {a.heat !== '-' && <span style={{ marginLeft: 8, fontSize: 12, fontFamily: 'monospace' }}>
-                          炉次: {a.heat}
-                        </span>}
+        <div className="card" style={{ padding: 22 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: '#111827', marginBottom: 6 }}>在制炉次 实时追踪</div>
+          <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 16 }}>吹炼 → 精炼 → 连铸 → 热轧 → 冷轧 · 5工序</div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {heats.map((h, hi) => {
+              const steps = ['转炉吹炼', 'LF精炼', 'RH精炼', '连铸浇注', '热轧轧制'];
+              const stepMap = {
+                '转炉吹炼': 0, 'LF精炼': 1, 'RH精炼': 2, '连铸中': 3, '连铸等待': 3, '热轧完成': 4, '冷轧完成': 5
+              };
+              const currentIdx = Math.max(0, Math.min(5, (stepMap[h.status] ?? 0)));
+              return (
+                <div key={h.id} style={{
+                  padding: 12, border: h.quality_locked ? '1px solid #fecaca' : '1px solid #e5e7eb',
+                  borderRadius: 10, background: h.quality_locked ? '#fff5f5' : '#fff'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <div>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: '#1e40af' }}>{h.heat_no}</span>
+                      <span style={{ marginLeft: 8, padding: '1px 8px', background: '#eff6ff', color: '#1d4ed8', borderRadius: 10, fontSize: 11, fontWeight: 600 }}>
+                        {h.steel_grade}
                       </span>
-                      <span style={{ fontSize: 12, color: '#999' }}>{a.time}</span>
+                      {h.quality_locked && (
+                        <span style={{ marginLeft: 6, color: '#dc2626', fontSize: 11, fontWeight: 700 }}>🔒 已锁定</span>
+                      )}
                     </div>
-                    <div className="timeline-desc" style={{ marginTop: 6 }}>
-                      {a.content}
-                    </div>
+                    <span style={{
+                      padding: '2px 10px', borderRadius: 10, fontSize: 11, fontWeight: 600,
+                      background: currentIdx >= 5 ? '#dcfce7' : currentIdx >= 3 ? '#dbeafe' : '#fef3c7',
+                      color: currentIdx >= 5 ? '#166534' : currentIdx >= 3 ? '#1e40af' : '#92400e'
+                    }}>{h.status}</span>
                   </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                    {steps.map((s, si) => {
+                      const done = si < currentIdx, active = si === currentIdx;
+                      return (
+                        <React.Fragment key={si}>
+                          <div style={{
+                            flex: 1, textAlign: 'center', padding: '4px 0', borderRadius: 4,
+                            fontSize: 10, fontWeight: done ? 600 : 500,
+                            background: done ? '#dcfce7' : active ? '#bfdbfe' : '#f3f4f6',
+                            color: done ? '#166534' : active ? '#1e40af' : '#9ca3af',
+                            minWidth: 48, position: 'relative'
+                          }}>
+                            {done && <span style={{ position: 'absolute', top: -6, right: -2, fontSize: 9 }}>✓</span>}
+                            {s.slice(0, 2)}
+                          </div>
+                          {si < steps.length - 1 && (
+                            <div style={{ width: 6, height: 2, background: si < currentIdx ? '#86efac' : '#e5e7eb' }} />
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, fontSize: 10, color: '#9ca3af' }}>
+                    <span>计划{h.plan_weight}t / 实际{h.actual_weight || 0}t</span>
+                    {h.tundish_life > 0 && <span>中间包寿命 第{h.tundish_life}炉</span>}
+                    <span>👤 {h.operator}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* 报警时间线 + 库存预警 */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 18 }}>
+        <div className="card" style={{ padding: 22 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: '#111827' }}>⚠️ 报警与预警时间线</div>
+              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>质量报警 / 库存预警 / 设备预警 / 排程调整 最近事件</div>
+            </div>
+            <span style={{ padding: '3px 12px', background: '#fee2e2', color: '#991b1b', borderRadius: 10, fontSize: 11, fontWeight: 700 }}>
+              {quality.filter(q => q.result === '不合格').length + materials.length} 条未处理
+            </span>
+          </div>
+
+          <div style={{ position: 'relative', paddingLeft: 28 }}>
+            <div style={{ position: 'absolute', left: 11, top: 4, bottom: 4, width: 2, background: 'linear-gradient(180deg, #ef4444, #f59e0b, #3b82f6)' }} />
+            {[
+              { type: '质量报警', color: '#ef4444', icon: '🚨', time: '13分钟前', title: '炉次 HEAT-005 质量锁定', desc: '转炉终点S含量0.008%，超标0.003%，建议LF深脱硫处理后评审' },
+              { type: '设备预警', color: '#f59e0b', icon: '⚙️', time: '42分钟前', title: '2号步进加热炉温度偏高', desc: '2区1260℃，超上限30℃，自动减煤气开度12%' },
+              { type: '库存预警', color: '#d97706', icon: '📦', time: '1小时前',   title: '中间包涂抹料 低于安全库存', desc: '库存72吨 / 安全库存50吨，建议3天内补货80吨' },
+              { type: '排程调整', color: '#3b82f6', icon: '📅', time: '2小时前',   title: 'SO-2026-0005 紧急度上调为5★', desc: '中船黄埔 AH32 船板交期提前，需优先排产' },
+              ...materials.map((m, i) => ({ type: '库存预警', color: '#dc2626', icon: '🔻', time: `${2 + i * 3}小时前`, title: `${m.name} 库存告警`, desc: `库存${m.stock}${m.unit} / 安全库存${m.safe_stock}${m.unit}，缺口${Math.round(m.safe_stock - m.stock)}${m.unit}` }))
+            ].slice(0, 7).map((a, i) => (
+              <div key={i} style={{ position: 'relative', marginBottom: 16 }}>
+                <div style={{
+                  position: 'absolute', left: -28, top: 0, width: 22, height: 22, borderRadius: '50%',
+                  background: a.color + '22', border: `2px solid ${a.color}`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10
+                }}>{a.icon}</div>
+                <div style={{
+                  padding: '10px 14px', borderLeft: `3px solid ${a.color}`,
+                  background: a.color + '0a', borderRadius: '0 8px 8px 0'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, alignItems: 'center' }}>
+                    <span style={{ fontSize: 11, padding: '1px 8px', background: a.color + '22', color: a.color, borderRadius: 8, fontWeight: 700 }}>
+                      {a.type}
+                    </span>
+                    <span style={{ fontSize: 10, color: '#9ca3af' }}>{a.time}</span>
+                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#111827', marginBottom: 2 }}>{a.title}</div>
+                  <div style={{ fontSize: 11, color: '#6b7280', lineHeight: 1.6 }}>{a.desc}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="card" style={{ padding: 22 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: '#111827', marginBottom: 4 }}>近7天 能耗结构 面积图</div>
+          <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 18 }}>电耗(万kWh) · 煤气(万Nm³) · 水耗(千吨)</div>
+
+          <svg width="100%" height="180" viewBox="0 0 320 180" style={{ display: 'block' }}>
+            {(() => {
+              const days = last7Days.length;
+              const padL = 36, padR = 10, padT = 16, padB = 22;
+              const w = 320 - padL - padR, h = 180 - padT - padB;
+              const series = [
+                { name: '电耗', color: '#1e40af', data: last7Days.map((d, i) => 85 + ((i * 13 + 7) % 30)) },
+                { name: '煤气', color: '#f59e0b', data: last7Days.map((d, i) => 42 + ((i * 11 + 5) % 20)) },
+                { name: '水耗', color: '#0ea5e9', data: last7Days.map((d, i) => 28 + ((i * 9 + 3) % 15)) }
+              ];
+              const maxV = 130;
+              const mkPts = (d) => d.map((v, i) => {
+                const x = padL + (w * i / (days - 1));
+                const y = padT + h - (v / maxV) * h;
+                return [x, y];
+              });
+              return (
+                <g>
+                  {[0, 1, 2, 3, 4].map(i => {
+                    const y = padT + (h * i / 4);
+                    const v = Math.round(maxV - (maxV * i / 4));
+                    return <g key={i}>
+                      <line x1={padL} y1={y} x2={320 - padR} y2={y} stroke="#f3f4f6" strokeDasharray="3 3" />
+                      <text x={padL - 6} y={y + 3} textAnchor="end" fontSize="9" fill="#9ca3af">{v}</text>
+                    </g>;
+                  })}
+                  {series.map((s, si) => {
+                    const pts = mkPts(s.data);
+                    const d = `M ${pts[0][0]} ${padT + h} L ${pts.map(p => p.join(' ')).join(' L ')} L ${pts[pts.length - 1][0]} ${padT + h} Z`;
+                    const line = `M ${pts.map(p => p.join(' ')).join(' L ')}`;
+                    return (
+                      <g key={si}>
+                        <path d={d} fill={s.color} opacity="0.18" />
+                        <path d={line} fill="none" stroke={s.color} strokeWidth="2" />
+                        {pts.map((p, pi) => <circle key={pi} cx={p[0]} cy={p[1]} r="3" fill="#fff" stroke={s.color} strokeWidth="2" />)}
+                      </g>
+                    );
+                  })}
+                  {last7Days.map((d, i) => (
+                    <text key={i} x={padL + (w * i / (days - 1))} y={180 - 6} fontSize="9" textAnchor="middle" fill="#6b7280">{d.date}</text>
+                  ))}
+                </g>
+              );
+            })()}
+          </svg>
+
+          <div style={{ display: 'flex', justifyContent: 'space-around', marginTop: 10, fontSize: 11 }}>
+            {[['电耗', '#1e40af'], ['煤气', '#f59e0b'], ['水耗', '#0ea5e9']].map(([l, c]) => (
+              <span key={l} style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#4b5563', fontWeight: 600 }}>
+                <span style={{ width: 12, height: 3, background: c, borderRadius: 2 }} />{l}
+              </span>
+            ))}
+          </div>
+
+          <div style={{ borderTop: '1px dashed #e5e7eb', marginTop: 20, paddingTop: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#111827', marginBottom: 10 }}>📋 最近销售订单 TOP 6</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {orders.map(o => (
+                <div key={o.id} style={{ display: 'flex', alignItems: 'center', padding: '8px 10px', background: '#f9fafb', borderRadius: 8, fontSize: 11 }}>
+                  <span style={{ fontWeight: 700, color: '#1e40af', width: 86 }}>{o.order_no?.slice(0, 13)}</span>
+                  <span style={{ padding: '1px 6px', background: '#eff6ff', color: '#1d4ed8', borderRadius: 8, marginRight: 6, fontWeight: 600 }}>{o.steel_grade}</span>
+                  <span style={{ flex: 1, color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {(o.customer || '').slice(0, 12)}
+                  </span>
+                  <span style={{ color: '#6b7280', marginRight: 8 }}>{o.quantity}吨</span>
+                  <span style={{
+                    padding: '1px 8px', borderRadius: 8, fontWeight: 600,
+                    background: o.status === '已完成' ? '#dcfce7' : o.status === '生产中' ? '#dbeafe' : '#fef3c7',
+                    color: o.status === '已完成' ? '#166534' : o.status === '生产中' ? '#1e40af' : '#92400e'
+                  }}>{o.status}</span>
                 </div>
               ))}
             </div>
@@ -361,27 +493,30 @@ function Dashboard({ user }) {
         </div>
       </div>
 
-      <div className="card">
-        <div className="card-header">
-          <span className="card-title">⚡ 今日能耗曲线 (分时)</span>
+      {showReset && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}
+          onClick={() => setShowReset(false)}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ width: 420, background: '#fff', borderRadius: 12, padding: 22, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#92400e', marginBottom: 12 }}>⚠️ 确认重置演示数据库？</div>
+            <div style={{ fontSize: 13, color: '#4b5563', lineHeight: 1.8, marginBottom: 18 }}>
+              所有销售订单、设备状态、炉次数据、维保工单、质检记录将重置为初始演示数据。
+              此操作不可撤销！
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button onClick={() => setShowReset(false)}
+                style={{ padding: '9px 20px', fontSize: 13, borderRadius: 8, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer' }}>取消</button>
+              <button onClick={() => {
+                resetSteelDatabase();
+                localStorage.removeItem('steel_prod_user');
+                setShowReset(false);
+                setTimeout(() => window.location.reload(), 400);
+              }}
+                style={{ padding: '9px 20px', fontSize: 13, fontWeight: 600, borderRadius: 8, border: 'none', background: '#dc2626', color: '#fff', cursor: 'pointer' }}>确认重置</button>
+            </div>
+          </div>
         </div>
-        <div className="card-body">
-          <ResponsiveContainer width="100%" height={260}>
-            <AreaChart data={energyData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="time" tick={{ fontSize: 12 }} />
-              <YAxis tick={{ fontSize: 12 }} />
-              <Tooltip />
-              <Legend />
-              <Area type="monotone" dataKey="电耗" stackId="1" stroke="#1890ff" fill="#1890ff" fillOpacity={0.6} />
-              <Area type="monotone" dataKey="气耗" stackId="1" stroke="#ff6b35" fill="#ff6b35" fillOpacity={0.6} />
-              <Area type="monotone" dataKey="水耗" stackId="1" stroke="#13c2c2" fill="#13c2c2" fillOpacity={0.6} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+      )}
     </div>
   );
 }
-
-export default Dashboard;

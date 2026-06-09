@@ -1,331 +1,387 @@
-import React, { useState, useEffect } from 'react';
-import { query, insert, update, remove } from '../utils/api.js';
-import { getUrgencyLabel, getUrgencyColor, formatDate, formatNumber } from '../utils/format.js';
+import React, { useState, useEffect, useMemo } from 'react';
+import { query, insert, update, remove, list, getSteelKpiDashboard } from '../utils/api.js';
 
-const demoOrders = [
-  { id: 1, order_no: 'SO-2024-0001', customer_name: '一汽集团', steel_grade: 'DC01', specification: '1.5mm*1250mm冷轧卷', quantity: 500, urgency: 5, delivery_date: '2024-06-16', status: '待排程', created_at: '2024-06-01 10:30:00' },
-  { id: 2, order_no: 'SO-2024-0002', customer_name: '上汽集团', steel_grade: 'SPHC', specification: '3.0mm*1500mm热轧卷', quantity: 1200, urgency: 3, delivery_date: '2024-06-23', status: '待排程', created_at: '2024-06-02 09:15:00' },
-  { id: 3, order_no: 'SO-2024-0003', customer_name: '宝钢加工', steel_grade: 'Q235B', specification: '150mm*150mm方坯', quantity: 800, urgency: 1, delivery_date: '2024-06-30', status: '待排程', created_at: '2024-06-03 14:00:00' },
-  { id: 4, order_no: 'SO-2024-0004', customer_name: '中船重工', steel_grade: 'AH32', specification: '20mm*2000mm船板', quantity: 600, urgency: 4, delivery_date: '2024-06-19', status: '排程中', created_at: '2024-06-04 08:45:00' },
-  { id: 5, order_no: 'SO-2024-0005', customer_name: '海尔集团', steel_grade: 'ST14', specification: '0.8mm*1000mm冷轧卷', quantity: 350, urgency: 2, delivery_date: '2024-06-27', status: '排程中', created_at: '2024-06-05 11:20:00' },
-  { id: 6, order_no: 'SO-2024-0006', customer_name: '比亚迪汽车', steel_grade: 'HC340LA', specification: '2.0mm*1200mm冷轧卷', quantity: 420, urgency: 5, delivery_date: '2024-06-14', status: '待排程', created_at: '2024-06-08 16:00:00' },
-  { id: 7, order_no: 'SO-2024-0007', customer_name: '中国建筑', steel_grade: 'HRB400E', specification: 'Φ25mm螺纹钢', quantity: 1500, urgency: 2, delivery_date: '2024-07-05', status: '生产中', created_at: '2024-06-02 13:30:00' },
-  { id: 8, order_no: 'SO-2024-0008', customer_name: '格力电器', steel_grade: 'DC04', specification: '1.0mm*1000mm冷轧卷', quantity: 280, urgency: 3, delivery_date: '2024-06-25', status: '已完成', created_at: '2024-05-28 10:00:00' },
-  { id: 9, order_no: 'SO-2024-0009', customer_name: '东方电气', steel_grade: 'Q345B', specification: '30mm*2500mm中厚板', quantity: 750, urgency: 4, delivery_date: '2024-06-20', status: '待排程', created_at: '2024-06-07 15:45:00' },
-  { id: 10, order_no: 'SO-2024-0010', customer_name: '长安汽车', steel_grade: 'B340LA', specification: '1.8mm*1250mm冷轧卷', quantity: 380, urgency: 3, delivery_date: '2024-06-28', status: '待排程', created_at: '2024-06-08 09:30:00' }
+const STEEL_GRADES = [
+  'Q235B', 'Q345B', 'DC01', 'DC04', 'SPHC', 'SPCC',
+  'AH32', 'AH36', 'HC340LA', 'HC420LA', 'Q550D', 'Q690D'
 ];
 
-const STEEL_GRADES = ['Q235B', 'Q345B', 'DC01', 'DC04', 'ST14', 'SPHC', 'HC340LA', 'B340LA', 'AH32', 'HRB400E'];
-const STATUSES = [
-  { value: '待排程', color: 'gray' },
-  { value: '排程中', color: 'warning' },
-  { value: '生产中', color: 'primary' },
-  { value: '已完成', color: 'success' },
-  { value: '已取消', color: 'danger' }
-];
+const ORDER_STATUS = ['待排程', '已排程', '生产中', '临期待交付', '已完成', '已取消'];
+const URGENCY_LABEL = ['无', '一般', '普通', '较急', '紧急', '特急'];
+const URGENCY_COLOR = ['#9ca3af', '#6b7280', '#3b82f6', '#f59e0b', '#ef4444', '#dc2626'];
 
-function SalesOrders({ user }) {
-  const [list, setList] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState('');
-  const [urgencyFilter, setUrgencyFilter] = useState('');
+const todayISO = () => new Date().toISOString().slice(0, 10);
+const daysBetween = (d1, d2) => Math.ceil((new Date(d1) - new Date(d2)) / (1000 * 60 * 60 * 24));
+
+function statusBadge(s) {
+  const map = {
+    '待排程':     { bg: '#fef3c7', color: '#92400e' },
+    '已排程':     { bg: '#dbeafe', color: '#1e40af' },
+    '生产中':     { bg: '#d1fae5', color: '#065f46' },
+    '临期待交付': { bg: '#fee2e2', color: '#991b1b' },
+    '已完成':     { bg: '#e0e7ff', color: '#3730a3' },
+    '已取消':     { bg: '#f3f4f6', color: '#4b5563' }
+  };
+  const c = map[s] || { bg: '#f3f4f6', color: '#000' };
+  return <span className="tag" style={{ background: c.bg, color: c.color, padding: '3px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600 }}>{s}</span>;
+}
+
+function FormRow({ label, required, children }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#1f2937', marginBottom: 6 }}>
+        {label}{required && <span style={{ color: '#dc2626', marginLeft: 4 }}>*</span>}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+export default function SalesOrders({ user }) {
+  const [orders, setOrders] = useState([]);
+  const [kpi, setKpi] = useState(null);
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('全部');
+  const [urgencyFilter, setUrgencyFilter] = useState('全部');
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({
-    order_no: '', customer_name: '', steel_grade: 'Q235B', specification: '',
-    quantity: 100, urgency: 3, delivery_date: '', status: '待排程'
+    order_no: '', customer: '', steel_grade: 'Q235B', specification: '',
+    quantity: 500, order_date: todayISO(), delivery_date: todayISO(15),
+    urgency: 3, status: '待排程', note: ''
   });
+  const [confirmDel, setConfirmDel] = useState(null);
 
-  useEffect(() => {
-    loadList();
-  }, []);
-
-  const loadList = async () => {
-    try {
-      setLoading(true);
-      const data = await query('SELECT * FROM sales_orders ORDER BY urgency DESC, created_at DESC');
-      setList(data && data.length > 0 ? data : demoOrders);
-    } catch (e) {
-      setList(demoOrders);
-    } finally {
-      setLoading(false);
-    }
+  const refresh = () => {
+    const all = list('sales_orders', 'created_at DESC');
+    setOrders(all);
+    setKpi(getSteelKpiDashboard());
   };
+  useEffect(refresh, []);
 
-  const filtered = list.filter(item => {
-    if (statusFilter && item.status !== statusFilter) return false;
-    if (urgencyFilter && item.urgency !== Number(urgencyFilter)) return false;
-    if (search && !item.order_no.includes(search) && !item.customer_name.includes(search) && !item.steel_grade.includes(search)) return false;
-    return true;
-  });
+  const filtered = useMemo(() => {
+    return orders.filter(o => {
+      if (statusFilter !== '全部' && o.status !== statusFilter) return false;
+      if (urgencyFilter !== '全部' && String(o.urgency) !== urgencyFilter) return false;
+      if (search) {
+        const s = search.toLowerCase();
+        if (!(o.order_no || '').toLowerCase().includes(s) &&
+            !(o.customer || '').toLowerCase().includes(s) &&
+            !(o.steel_grade || '').toLowerCase().includes(s) &&
+            !(o.specification || '').toLowerCase().includes(s)) return false;
+      }
+      return true;
+    });
+  }, [orders, search, statusFilter, urgencyFilter]);
 
-  const today = new Date();
-  const stats = {
-    total: filtered.length,
-    pending: filtered.filter(x => x.status === '待排程').length,
-    producing: filtered.filter(x => x.status === '生产中').length,
-    completed: filtered.filter(x => x.status === '已完成').length,
-    urgent: filtered.filter(x => {
-      const dd = new Date(x.delivery_date);
-      const days = (dd - today) / (1000 * 60 * 60 * 24);
-      return days <= 7 && x.status !== '已完成';
-    }).length,
-    totalQty: filtered.reduce((s, x) => s + x.quantity, 0)
-  };
+  const stats = useMemo(() => ({
+    total: orders.length,
+    pending: orders.filter(o => ['待排程', '已排程'].includes(o.status)).length,
+    pendingWeight: Math.round(orders.filter(o => ['待排程', '已排程'].includes(o.status)).reduce((s, o) => s + (o.quantity || 0), 0)),
+    producing: orders.filter(o => o.status === '生产中').length,
+    overdue: orders.filter(o => {
+      if (o.status === '已完成' || o.status === '已取消') return false;
+      return daysBetween(o.delivery_date, todayISO()) <= 7;
+    }).length
+  }), [orders]);
 
-  const openCreate = () => {
+  const openNew = () => {
     setEditing(null);
-    const nextNo = `SO-${new Date().getFullYear()}-${String((list.length + 1)).padStart(4, '0')}`;
-    const defaultDate = new Date();
-    defaultDate.setDate(defaultDate.getDate() + 14);
+    const seq = String((orders.length || 0) + 1001).padStart(4, '0');
     setForm({
-      order_no: nextNo, customer_name: '', steel_grade: 'Q235B', specification: '',
-      quantity: 100, urgency: 3, delivery_date: defaultDate.toISOString().split('T')[0], status: '待排程'
+      order_no: `SO-2026-${seq}`,
+      customer: '', steel_grade: 'Q235B', specification: '1250×200',
+      quantity: 500, order_date: todayISO(), delivery_date: todayISO(15),
+      urgency: 3, status: '待排程', note: ''
     });
     setShowModal(true);
   };
 
-  const openEdit = (item) => {
-    setEditing(item);
-    setForm({ ...item });
+  const openEdit = (o) => {
+    setEditing(o.id);
+    setForm({ ...o });
     setShowModal(true);
   };
 
-  const handleSubmit = async () => {
-    if (!form.customer_name || !form.specification || form.quantity <= 0) {
-      alert('请完整填写订单信息');
-      return;
-    }
+  const save = () => {
+    if (!form.customer.trim()) return alert('请填写客户名称');
+    if (!form.specification.trim()) return alert('请填写规格');
+    if (!(form.quantity > 0)) return alert('数量必须大于0');
+
+    const payload = {
+      ...form,
+      updated_at: new Date().toISOString().slice(0, 19).replace('T', ' ')
+    };
+
     try {
       if (editing) {
-        await update('sales_orders', form, 'id = ?', [editing.id]);
+        update('sales_orders', editing, payload);
       } else {
-        await insert('sales_orders', form);
+        payload.created_at = payload.updated_at;
+        if (!payload.actual_output) payload.actual_output = 0;
+        insert('sales_orders', payload);
       }
-      await loadList();
       setShowModal(false);
-    } catch (e) {
-      const newList = editing
-        ? list.map(x => x.id === editing.id ? { ...x, ...form } : x)
-        : [...list, { ...form, id: Date.now(), created_at: new Date().toISOString() }];
-      setList(newList);
-      setShowModal(false);
-    }
+      refresh();
+    } catch (e) { alert('保存失败: ' + e.message); }
   };
 
-  const handleDelete = (item) => {
-    if (confirm(`确定删除订单【${item.order_no}】？`)) {
-      try {
-        remove('sales_orders', 'id = ?', [item.id]);
-      } catch (e) {}
-      setList(list.filter(x => x.id !== item.id));
-    }
-  };
-
-  const getDeliveryStatus = (item) => {
-    if (item.status === '已完成') return { text: '已交付', color: 'success' };
-    const days = (new Date(item.delivery_date) - today) / (1000 * 60 * 60 * 24);
-    if (days < 0) return { text: `逾期${Math.abs(Math.floor(days))}天`, color: 'danger' };
-    if (days <= 3) return { text: `剩${Math.floor(days)}天`, color: 'danger' };
-    if (days <= 7) return { text: `剩${Math.floor(days)}天`, color: 'warning' };
-    return { text: `剩${Math.floor(days)}天`, color: 'info' };
+  const delOrder = (id) => {
+    remove('sales_orders', id);
+    setConfirmDel(null);
+    refresh();
   };
 
   return (
     <div>
-      <div className="grid-4 mb-20">
-        <div className="stat-card primary">
-          <div className="stat-label">订单总数</div>
-          <div className="stat-value">{stats.total}<span className="stat-unit">笔</span></div>
-          <div className="stat-change" style={{ color: '#999' }}>共 {formatNumber(stats.totalQty, 0)} 吨</div>
-        </div>
-        <div className="stat-card warning">
-          <div className="stat-label">待排程</div>
-          <div className="stat-value">{stats.pending}<span className="stat-unit">笔</span></div>
-          <div className="stat-change" style={{ color: '#999' }}>
-            {formatNumber(filtered.filter(x => x.status === '待排程').reduce((s, x) => s + x.quantity, 0), 0)} 吨待排
-          </div>
-        </div>
-        <div className="stat-card info">
-          <div className="stat-label">生产中</div>
-          <div className="stat-value">{stats.producing}<span className="stat-unit">笔</span></div>
-        </div>
-        <div className="stat-card danger">
-          <div className="stat-label">临期订单</div>
-          <div className="stat-value">{stats.urgent}<span className="stat-unit">笔</span></div>
-          <div className="stat-change down">7天内需交付</div>
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="card-header">
-          <div className="toolbar" style={{ marginBottom: 0 }}>
-            <div className="search-box">
-              <span>🔍</span>
-              <input placeholder="订单号/客户/钢种..." value={search} onChange={e => setSearch(e.target.value)} />
+      {/* 4个KPI卡片 */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginBottom: 24 }}>
+        {[
+          { label: '订单总数',     value: `${stats.total} 笔`,  sub: `共 ${Math.round(orders.reduce((s, o) => s + (o.quantity || 0), 0))} 吨`, color: 'linear-gradient(135deg, #1e40af, #3b82f6)', icon: '📋' },
+          { label: '待排程订单',   value: `${stats.pending} 笔`,sub: `${stats.pendingWeight} 吨待排`,                                   color: 'linear-gradient(135deg, #f59e0b, #f97316)', icon: '📅' },
+          { label: '生产中订单',   value: `${stats.producing} 笔`, sub: '跟踪在制炉次进度',                                           color: 'linear-gradient(135deg, #10b981, #059669)', icon: '🔥' },
+          { label: '临期订单',     value: `${stats.overdue} 笔`, sub: '7天内需交付订单',                                              color: 'linear-gradient(135deg, #ef4444, #dc2626)', icon: '⚠️' }
+        ].map((c, i) => (
+          <div key={i} className="stat-card" style={{
+            padding: 20, borderRadius: 12, background: '#fff', border: '1px solid #e5e7eb',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.05)', position: 'relative', overflow: 'hidden'
+          }}>
+            <div style={{ position: 'absolute', top: 0, right: 0, width: 90, height: 90, background: c.color, opacity: 0.08, borderRadius: '0 0 0 100%' }} />
+            <div style={{ position: 'relative' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                <div style={{ fontSize: 13, color: '#6b7280' }}>{c.label}</div>
+                <div style={{ fontSize: 22 }}>{c.icon}</div>
+              </div>
+              <div style={{ fontSize: 26, fontWeight: 700, color: '#111827', marginBottom: 4 }}>{c.value}</div>
+              <div style={{ fontSize: 12, color: '#9ca3af' }}>{c.sub}</div>
             </div>
-            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-              <option value="">全部状态</option>
-              {STATUSES.map(s => <option key={s.value} value={s.value}>{s.value}</option>)}
-            </select>
-            <select value={urgencyFilter} onChange={e => setUrgencyFilter(e.target.value)}>
-              <option value="">全部紧急度</option>
-              <option value="5">紧急 (5)</option>
-              <option value="4">较高 (4)</option>
-              <option value="3">一般 (3)</option>
-              <option value="2">较低 (2)</option>
-              <option value="1">普通 (1)</option>
-            </select>
           </div>
-          <div>
-            {(user.role === 'admin' || user.role === 'minister') && (
-              <button className="btn btn-primary" onClick={openCreate}>
-                ➕ 新建订单
-              </button>
-            )}
-          </div>
+        ))}
+      </div>
+
+      {/* 工具栏 */}
+      <div className="card" style={{ padding: 16, marginBottom: 20, display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+        <div style={{ flex: '1 1 280px', position: 'relative' }}>
+          <span style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }}>🔍</span>
+          <input
+            type="text" placeholder="搜索 订单号 / 客户 / 钢种 / 规格..."
+            value={search} onChange={e => setSearch(e.target.value)}
+            style={{ width: '100%', padding: '10px 14px 10px 40px', border: '1px solid #d1d5db', borderRadius: 8, fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
+          />
         </div>
-        <div className="card-body" style={{ padding: 0 }}>
-          <div className="table-container">
-            <table>
-              <thead>
-                <tr>
-                  <th>订单号</th>
-                  <th>客户名称</th>
-                  <th>钢种</th>
-                  <th>规格</th>
-                  <th>数量</th>
-                  <th>紧急度</th>
-                  <th>交货期</th>
-                  <th>状态</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading ? (
-                  <tr><td colSpan="9" className="text-center" style={{ padding: 40 }}>加载中...</td></tr>
-                ) : filtered.length === 0 ? (
-                  <tr><td colSpan="9"><div className="empty-state">📋 暂无订单数据</div></td></tr>
-                ) : (
-                  filtered.map(item => {
-                    const statusInfo = STATUSES.find(s => s.value === item.status) || STATUSES[0];
-                    const delStatus = getDeliveryStatus(item);
-                    return (
-                      <tr key={item.id}>
-                        <td className="font-bold" style={{ fontFamily: 'monospace', color: '#1890ff' }}>{item.order_no}</td>
-                        <td>{item.customer_name}</td>
-                        <td><span className="tag tag-primary">{item.steel_grade}</span></td>
-                        <td style={{ fontSize: 12, color: '#666' }}>{item.specification}</td>
-                        <td className="text-right font-bold">{formatNumber(item.quantity, 0)} 吨</td>
-                        <td>
-                          <span className={`tag tag-${getUrgencyColor(item.urgency)}`}>
-                            {getUrgencyLabel(item.urgency)}
-                          </span>
-                        </td>
-                        <td>
-                          <div>{formatDate(item.delivery_date)}</div>
-                          <div style={{ fontSize: 11, marginTop: 2 }}>
-                            <span className={`tag tag-${delStatus.color} tag-sm`} style={{ padding: '1px 6px' }}>
-                              {delStatus.text}
-                            </span>
-                          </div>
-                        </td>
-                        <td>
-                          <span className={`tag tag-${statusInfo.color}`}>{item.status}</span>
-                        </td>
-                        <td>
-                          <div style={{ display: 'flex', gap: 6 }}>
-                            <button className="btn btn-sm">详情</button>
-                            {(user.role === 'admin' || user.role === 'minister') && item.status === '待排程' && (
-                              <>
-                                <button className="btn btn-sm" onClick={() => openEdit(item)}>编辑</button>
-                                <button className="btn btn-sm btn-danger" onClick={() => handleDelete(item)}>删除</button>
-                              </>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-          <div className="pagination">
-            <span style={{ fontSize: 13, color: '#999', marginRight: 16 }}>
-              共 {filtered.length} 条记录
-            </span>
-            <button className="page-btn" disabled>«</button>
-            <button className="page-btn active">1</button>
-            <button className="page-btn">2</button>
-            <button className="page-btn">»</button>
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+          style={{ padding: '10px 14px', border: '1px solid #d1d5db', borderRadius: 8, fontSize: 13, minWidth: 140, background: '#fff' }}>
+          <option>全部状态</option>
+          {ORDER_STATUS.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <select value={urgencyFilter} onChange={e => setUrgencyFilter(e.target.value)}
+          style={{ padding: '10px 14px', border: '1px solid #d1d5db', borderRadius: 8, fontSize: 13, minWidth: 140, background: '#fff' }}>
+          <option value="全部">全部紧急度</option>
+          {URGENCY_LABEL.slice(1).map((l, i) => <option key={i + 1} value={String(i + 1)}>{l}</option>)}
+        </select>
+        <button className="btn btn-primary" onClick={openNew}
+          style={{ padding: '10px 20px', fontSize: 13, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 16 }}>+</span> 新建销售订单
+        </button>
+        <button className="btn btn-default" onClick={() => { setSearch(''); setStatusFilter('全部'); setUrgencyFilter('全部'); refresh(); }}
+          style={{ padding: '10px 16px', fontSize: 13, borderRadius: 8, border: '1px solid #d1d5db', cursor: 'pointer', background: '#fff' }}>
+          ↻ 重置/刷新
+        </button>
+      </div>
+
+      {/* 订单表格 */}
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ overflowX: 'auto' }}>
+          <table className="data-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+              <tr>
+                {['订单号', '客户名称', '钢种', '规格', '数量(吨)', '紧急度', '下单日期', '交货期', '状态', '操作'].map(h => (
+                  <th key={h} style={{ padding: '14px 14px', textAlign: 'left', fontWeight: 600, color: '#374151', whiteSpace: 'nowrap' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.length === 0 && (
+                <tr><td colSpan="10" style={{ padding: 60, textAlign: 'center', color: '#9ca3af' }}>暂无符合条件的销售订单</td></tr>
+              )}
+              {filtered.map(o => {
+                const remain = daysBetween(o.delivery_date, todayISO());
+                const nearDeadline = o.status !== '已完成' && o.status !== '已取消' && remain <= 7;
+                return (
+                  <tr key={o.id} style={{ borderBottom: '1px solid #f3f4f6', transition: 'background 0.1s' }}
+                    onMouseEnter={e => e.currentTarget.style.background = '#f9fafb'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                    <td style={{ padding: '12px 14px', color: '#1e40af', fontWeight: 600, whiteSpace: 'nowrap' }}>{o.order_no}</td>
+                    <td style={{ padding: '12px 14px', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={o.customer}>{o.customer}</td>
+                    <td style={{ padding: '12px 14px' }}>
+                      <span style={{ background: '#eff6ff', color: '#1d4ed8', padding: '3px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600 }}>{o.steel_grade}</span>
+                    </td>
+                    <td style={{ padding: '12px 14px', color: '#6b7280' }}>{o.specification}</td>
+                    <td style={{ padding: '12px 14px', fontWeight: 600 }}>{o.quantity?.toLocaleString()}</td>
+                    <td style={{ padding: '12px 14px' }}>
+                      <span style={{
+                        color: URGENCY_COLOR[o.urgency || 0] || '#6b7280',
+                        fontWeight: 700,
+                        fontSize: 12,
+                        letterSpacing: 1
+                      }}>{'★'.repeat(o.urgency || 0)}</span>
+                      <span style={{ color: '#9ca3af', marginLeft: 4, fontSize: 11 }}>
+                        {URGENCY_LABEL[o.urgency] || ''}
+                      </span>
+                    </td>
+                    <td style={{ padding: '12px 14px', color: '#6b7280' }}>{o.order_date}</td>
+                    <td style={{ padding: '12px 14px', position: 'relative' }}>
+                      <div style={{ color: nearDeadline ? '#dc2626' : '#1f2937', fontWeight: nearDeadline ? 700 : 500 }}>{o.delivery_date}</div>
+                      {nearDeadline && (
+                        <div style={{ fontSize: 11, color: '#dc2626', marginTop: 2 }}>
+                          {remain > 0 ? `剩${remain}天` : (remain === 0 ? '今日到期' : `逾期${-remain}天`)}
+                        </div>
+                      )}
+                    </td>
+                    <td style={{ padding: '12px 14px' }}>{statusBadge(o.status)}</td>
+                    <td style={{ padding: '12px 14px', whiteSpace: 'nowrap' }}>
+                      <button onClick={() => alert(
+                        `订单详情：\n\n订单号: ${o.order_no}\n客户: ${o.customer}\n钢种: ${o.steel_grade}\n规格: ${o.specification}\n数量: ${o.quantity} 吨\n紧急度: ${URGENCY_LABEL[o.urgency]}\n下单: ${o.order_date}\n交货: ${o.delivery_date}\n状态: ${o.status}\n${o.note ? `\n备注: ${o.note}` : ''}\n${o.actual_output ? `已产: ${Math.round(o.actual_output)} 吨 (${Math.round(o.actual_output / o.quantity * 100)}%)` : ''}${o.quality_rate ? `\n合格率: ${o.quality_rate.toFixed(1)}%` : ''}`
+                      )}
+                        style={{ border: 'none', background: 'none', color: '#0891b2', cursor: 'pointer', padding: '4px 8px', fontSize: 12 }}>查看</button>
+                      {(user?.role === 'admin' || user?.role === 'minister') && (
+                        <>
+                          <button onClick={() => openEdit(o)}
+                            style={{ border: 'none', background: 'none', color: '#2563eb', cursor: 'pointer', padding: '4px 8px', fontSize: 12 }}>编辑</button>
+                          <button onClick={() => setConfirmDel(o.id)}
+                            style={{ border: 'none', background: 'none', color: '#dc2626', cursor: 'pointer', padding: '4px 8px', fontSize: 12 }}>删除</button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ padding: '14px 18px', borderTop: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#6b7280', fontSize: 12 }}>
+          <div>共 <strong style={{ color: '#111827' }}>{filtered.length}</strong> 条记录 / 全部 {orders.length} 条</div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button className="btn btn-default" style={{ padding: '6px 12px', fontSize: 12, borderRadius: 6, border: '1px solid #e5e7eb', cursor: 'pointer' }}>上一页</button>
+            <button className="btn btn-primary" style={{ padding: '6px 12px', fontSize: 12, borderRadius: 6, border: 'none', cursor: 'pointer', color: '#fff' }}>1</button>
+            <button className="btn btn-default" style={{ padding: '6px 12px', fontSize: 12, borderRadius: 6, border: '1px solid #e5e7eb', cursor: 'pointer' }}>下一页</button>
           </div>
         </div>
       </div>
 
+      {/* 新建/编辑订单模态框 */}
       {showModal && (
-        <div className="modal-overlay" onClick={() => setShowModal(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <div className="modal-title">{editing ? '编辑订单' : '新建销售订单'}</div>
-              <button className="modal-close" onClick={() => setShowModal(false)}>×</button>
+        <div className="modal-overlay" onClick={() => setShowModal(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div className="modal" onClick={e => e.stopPropagation()}
+            style={{ width: '90%', maxWidth: 720, maxHeight: '90vh', overflowY: 'auto', background: '#fff', borderRadius: 14, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+            <div style={{ padding: '18px 22px', borderBottom: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: '#111827' }}>
+                {editing ? '📝 编辑销售订单' : '➕ 新建销售订单'}
+              </h3>
+              <button onClick={() => setShowModal(false)}
+                style={{ border: 'none', background: 'none', fontSize: 22, cursor: 'pointer', color: '#9ca3af', lineHeight: 1 }}>×</button>
             </div>
-            <div className="modal-body">
-              <div className="form-row">
-                <div className="form-group">
-                  <label>订单号<span className="required">*</span></label>
-                  <input value={form.order_no} onChange={e => setForm({ ...form, order_no: e.target.value })} />
-                </div>
-                <div className="form-group">
-                  <label>客户名称<span className="required">*</span></label>
-                  <input value={form.customer_name} onChange={e => setForm({ ...form, customer_name: e.target.value })} placeholder="如: 一汽集团" />
-                </div>
-              </div>
-              <div className="form-row">
-                <div className="form-group">
-                  <label>钢种<span className="required">*</span></label>
-                  <select value={form.steel_grade} onChange={e => setForm({ ...form, steel_grade: e.target.value })}>
-                    {STEEL_GRADES.map(g => <option key={g} value={g}>{g}</option>)}
-                  </select>
-                </div>
-                <div className="form-group">
-                  <label>规格<span className="required">*</span></label>
-                  <input value={form.specification} onChange={e => setForm({ ...form, specification: e.target.value })} placeholder="如: 1.5mm*1250mm冷轧卷" />
-                </div>
-              </div>
-              <div className="form-row">
-                <div className="form-group">
-                  <label>数量 (吨)<span className="required">*</span></label>
-                  <input type="number" min="1" value={form.quantity} onChange={e => setForm({ ...form, quantity: Number(e.target.value) })} />
-                </div>
-                <div className="form-group">
-                  <label>交货日期<span className="required">*</span></label>
-                  <input type="date" value={form.delivery_date} onChange={e => setForm({ ...form, delivery_date: e.target.value })} />
-                </div>
-                <div className="form-group">
-                  <label>紧急度</label>
-                  <select value={form.urgency} onChange={e => setForm({ ...form, urgency: Number(e.target.value) })}>
-                    <option value="1">1-普通</option>
-                    <option value="2">2-较低</option>
-                    <option value="3">3-一般</option>
-                    <option value="4">4-较高</option>
-                    <option value="5">5-紧急</option>
-                  </select>
-                </div>
-              </div>
-              <div className="form-group">
-                <label>状态</label>
-                <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
-                  {STATUSES.map(s => <option key={s.value} value={s.value}>{s.value}</option>)}
+            <div style={{ padding: 22, display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0 18px' }}>
+              <FormRow label="订单编号" required>
+                <input value={form.order_no} onChange={e => setForm({ ...form, order_no: e.target.value })}
+                  style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, boxSizing: 'border-box', outline: 'none' }} />
+              </FormRow>
+              <FormRow label="客户名称" required>
+                <input value={form.customer} onChange={e => setForm({ ...form, customer: e.target.value })}
+                  placeholder="例：中国第一汽车集团有限公司"
+                  style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, boxSizing: 'border-box', outline: 'none' }} />
+              </FormRow>
+              <FormRow label="钢种牌号" required>
+                <select value={form.steel_grade} onChange={e => setForm({ ...form, steel_grade: e.target.value })}
+                  style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, background: '#fff', outline: 'none' }}>
+                  {STEEL_GRADES.map(g => <option key={g} value={g}>{g}</option>)}
                 </select>
+              </FormRow>
+              <FormRow label="规格(宽×厚/板幅)" required>
+                <input value={form.specification} onChange={e => setForm({ ...form, specification: e.target.value })}
+                  placeholder="例：1500×220mm 或 1250×3.0mm"
+                  style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, boxSizing: 'border-box', outline: 'none' }} />
+              </FormRow>
+              <FormRow label="订货数量(吨)" required>
+                <input type="number" min="1" step="1" value={form.quantity}
+                  onChange={e => setForm({ ...form, quantity: Math.max(0, Number(e.target.value) || 0) })}
+                  style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, boxSizing: 'border-box', outline: 'none' }} />
+              </FormRow>
+              <FormRow label="紧急度" required>
+                <div style={{ display: 'flex', gap: 4, padding: '4px 0' }}>
+                  {URGENCY_LABEL.slice(1).map((l, i) => (
+                    <label key={i + 1} style={{
+                      flex: 1, textAlign: 'center', padding: '8px 4px', borderRadius: 6,
+                      cursor: 'pointer', fontSize: 11,
+                      border: '1px solid ' + (form.urgency === i + 1 ? URGENCY_COLOR[i + 1] : '#e5e7eb'),
+                      background: form.urgency === i + 1 ? URGENCY_COLOR[i + 1] + '18' : '#fff',
+                      color: form.urgency === i + 1 ? URGENCY_COLOR[i + 1] : '#6b7280',
+                      fontWeight: form.urgency === i + 1 ? 700 : 500,
+                      transition: 'all 0.1s'
+                    }}>
+                      <input type="radio" style={{ display: 'none' }} checked={form.urgency === i + 1} onChange={() => setForm({ ...form, urgency: i + 1 })} />
+                      {'★'.repeat(i + 1)}<br />{l}
+                    </label>
+                  ))}
+                </div>
+              </FormRow>
+              <FormRow label="下单日期">
+                <input type="date" value={form.order_date} onChange={e => setForm({ ...form, order_date: e.target.value })}
+                  style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, boxSizing: 'border-box', outline: 'none' }} />
+              </FormRow>
+              <FormRow label="要求交货期" required>
+                <input type="date" value={form.delivery_date} onChange={e => setForm({ ...form, delivery_date: e.target.value })}
+                  style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, boxSizing: 'border-box', outline: 'none' }} />
+              </FormRow>
+              <FormRow label="订单状态" required>
+                <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}
+                  style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, background: '#fff', outline: 'none' }}>
+                  {ORDER_STATUS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </FormRow>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <FormRow label="备注(执行标准/用途/技术要求等)">
+                  <textarea rows="3" value={form.note || ''} onChange={e => setForm({ ...form, note: e.target.value })}
+                    placeholder="例：GB/T 1591-2018，用于汽车底盘结构件，要求零下20℃冲击功≥34J"
+                    style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, resize: 'vertical', boxSizing: 'border-box', outline: 'none', fontFamily: 'inherit' }} />
+                </FormRow>
               </div>
+              {(form.actual_output || form.quality_rate) && (
+                <div style={{ gridColumn: '1 / -1', padding: 12, background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, fontSize: 12, color: '#166534' }}>
+                  📊 生产实际数据：已产出 {Math.round(form.actual_output || 0)} 吨 / 合格率 {form.quality_rate ? form.quality_rate.toFixed(1) + '%' : '—'}
+                </div>
+              )}
             </div>
-            <div className="modal-footer">
-              <button className="btn" onClick={() => setShowModal(false)}>取消</button>
-              <button className="btn btn-primary" onClick={handleSubmit}>
-                {editing ? '保存修改' : '创建订单'}
+            <div style={{ padding: '16px 22px', borderTop: '1px solid #f3f4f6', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button className="btn btn-default" onClick={() => setShowModal(false)}
+                style={{ padding: '10px 20px', fontSize: 13, borderRadius: 8, border: '1px solid #d1d5db', cursor: 'pointer', background: '#fff' }}>取消</button>
+              <button className="btn btn-primary" onClick={save}
+                style={{ padding: '10px 28px', fontSize: 13, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer', color: '#fff', background: 'linear-gradient(135deg, #1e40af, #2563eb)' }}>
+                💾 保存订单（写入localStorage）
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 删除确认 */}
+      {confirmDel && (
+        <div className="modal-overlay" onClick={() => setConfirmDel(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}>
+          <div className="modal" onClick={e => e.stopPropagation()}
+            style={{ width: 420, background: '#fff', borderRadius: 12, overflow: 'hidden' }}>
+            <div style={{ padding: 22, background: '#fee2e2', borderBottom: '1px solid #fecaca', fontSize: 15, color: '#991b1b', fontWeight: 600 }}>
+              ⚠️ 确认删除该销售订单？
+            </div>
+            <div style={{ padding: 20, fontSize: 13, color: '#4b5563', lineHeight: 1.8 }}>
+              删除后订单将从数据库中移除，排程和生产模块将无法再读取该订单，此操作不可恢复。
+            </div>
+            <div style={{ padding: '14px 20px', borderTop: '1px solid #f3f4f6', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button className="btn btn-default" onClick={() => setConfirmDel(null)}
+                style={{ padding: '8px 16px', fontSize: 13, borderRadius: 6, border: '1px solid #d1d5db', cursor: 'pointer', background: '#fff' }}>取消</button>
+              <button onClick={() => delOrder(confirmDel)}
+                style={{ padding: '8px 20px', fontSize: 13, fontWeight: 600, borderRadius: 6, border: 'none', cursor: 'pointer', color: '#fff', background: 'linear-gradient(135deg, #dc2626, #b91c1c)' }}>确认删除</button>
             </div>
           </div>
         </div>
@@ -333,5 +389,3 @@ function SalesOrders({ user }) {
     </div>
   );
 }
-
-export default SalesOrders;

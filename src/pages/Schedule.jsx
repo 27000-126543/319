@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { query, insert, update } from '../utils/api.js';
+import { query, insert, update, list } from '../utils/api.js';
 import { formatDateTime, formatDate, formatNumber, todayStr,
   getScheduleStatusLabel, getScheduleStatusColor,
   getItemStatusLabel, getItemStatusColor } from '../utils/format.js';
@@ -33,16 +33,25 @@ const demoSchedules = [
   }
 ];
 
-const PENDING_ORDERS = [
-  { id: 1, order_no: 'SO-2024-0001', customer_name: '一汽集团', steel_grade: 'DC01', quantity: 500, urgency: 5, delivery_date: '2024-06-16' },
-  { id: 6, order_no: 'SO-2024-0006', customer_name: '比亚迪汽车', steel_grade: 'HC340LA', quantity: 420, urgency: 5, delivery_date: '2024-06-14' },
-  { id: 4, order_no: 'SO-2024-0004', customer_name: '中船重工', steel_grade: 'AH32', quantity: 600, urgency: 4, delivery_date: '2024-06-19' },
-  { id: 9, order_no: 'SO-2024-0009', customer_name: '东方电气', steel_grade: 'Q345B', quantity: 750, urgency: 4, delivery_date: '2024-06-20' },
-  { id: 2, order_no: 'SO-2024-0002', customer_name: '上汽集团', steel_grade: 'SPHC', quantity: 1200, urgency: 3, delivery_date: '2024-06-23' },
-  { id: 10, order_no: 'SO-2024-0010', customer_name: '长安汽车', steel_grade: 'B340LA', quantity: 380, urgency: 3, delivery_date: '2024-06-28' },
-  { id: 5, order_no: 'SO-2024-0005', customer_name: '海尔集团', steel_grade: 'ST14', quantity: 350, urgency: 2, delivery_date: '2024-06-27' },
-  { id: 3, order_no: 'SO-2024-0003', customer_name: '宝钢加工', steel_grade: 'Q235B', quantity: 800, urgency: 1, delivery_date: '2024-06-30' }
-];
+function getPendingOrdersFromDB() {
+  try {
+    const all = list('sales_orders', 'urgency DESC, delivery_date ASC');
+    return (all || []).filter(o => ['待排程', '已排程'].includes(o.status)).map(o => ({
+      id: o.id,
+      order_no: o.order_no,
+      customer_name: o.customer,
+      steel_grade: o.steel_grade,
+      quantity: o.quantity,
+      urgency: o.urgency,
+      delivery_date: o.delivery_date
+    }));
+  } catch (e) {
+    console.error('读取销售订单失败:', e);
+    return [];
+  }
+}
+
+let PENDING_ORDERS = [];
 
 const EQUIPMENTS = [
   { id: 1, name: '1号转炉', type: 'converter' },
@@ -196,6 +205,7 @@ function generateSchedule(orders, equipments) {
 
 function Schedule({ user }) {
   const [activeTab, setActiveTab] = useState('gantt');
+  const [pendingOrders, setPendingOrders] = useState([]);
   const [schedules, setSchedules] = useState(demoSchedules);
   const [selectedSchedule, setSelectedSchedule] = useState(demoSchedules[0]);
   const [scheduleDate, setScheduleDate] = useState(todayStr());
@@ -208,6 +218,25 @@ function Schedule({ user }) {
     { id: 1, schedule_item_id: 8, requested_by: 3, reason: '2号连铸机液压系统需紧急检查', status: '待审批', original_plan: '11:30-13:45 @2号连铸机', new_plan: '推迟至14:30开始', created_at: '2024-06-09 09:15' }
   ]);
   const [generating, setGenerating] = useState(false);
+
+  useEffect(() => {
+    PENDING_ORDERS = getPendingOrdersFromDB();
+    setPendingOrders(PENDING_ORDERS);
+    if (PENDING_ORDERS.length > 0) {
+      const generatedItems = generateSchedule(PENDING_ORDERS.slice(0, 5), EQUIPMENTS);
+      const autoSchedule = {
+        id: 999,
+        schedule_date: todayStr(),
+        version: 1,
+        status: '已生成',
+        created_by: user?.id || 1,
+        created_at: new Date().toLocaleString(),
+        items: generatedItems
+      };
+      setSchedules([autoSchedule, ...demoSchedules]);
+      setSelectedSchedule(autoSchedule);
+    }
+  }, []);
 
   const currentSchedule = schedules.find(s => s.schedule_date === scheduleDate) || schedules[0];
 
@@ -245,6 +274,8 @@ function Schedule({ user }) {
 
   const handleGenerateSchedule = async () => {
     setGenerating(true);
+    PENDING_ORDERS = getPendingOrdersFromDB();
+    setPendingOrders(PENDING_ORDERS);
     setTimeout(() => {
       const ordersToSchedule = selectedOrders.length > 0
         ? PENDING_ORDERS.filter(o => selectedOrders.includes(o.id))
@@ -335,10 +366,10 @@ function Schedule({ user }) {
   };
 
   const toggleSelectAllOrders = () => {
-    if (selectedOrders.length === PENDING_ORDERS.length) {
+    if (selectedOrders.length === pendingOrders.length) {
       setSelectedOrders([]);
     } else {
-      setSelectedOrders(PENDING_ORDERS.map(o => o.id));
+      setSelectedOrders(pendingOrders.map(o => o.id));
     }
   };
 
@@ -562,7 +593,7 @@ function Schedule({ user }) {
               <tbody>
                 {currentSchedule?.items?.map((item, idx) => {
                   const eq = EQUIPMENTS.find(e => e.id === item.equipment_id);
-                  const order = PENDING_ORDERS.find(o => o.id === item.order_id);
+                  const order = pendingOrders.find(o => o.id === item.order_id);
                   return (
                     <tr key={item.id} style={{
                       borderLeft: `3px solid ${getProcessColor(item.steel_grade)}`
@@ -781,13 +812,13 @@ function Schedule({ user }) {
                   cursor: 'pointer'
                 }}
                 onClick={toggleSelectAllOrders}>
-                  <input type="checkbox" checked={selectedOrders.length === PENDING_ORDERS.length} readOnly />
+                  <input type="checkbox" checked={selectedOrders.length === pendingOrders.length && pendingOrders.length > 0} readOnly />
                   <span>全选</span>
                   <span style={{ marginLeft: 'auto', color: '#999', fontSize: 12 }}>
-                    共 {PENDING_ORDERS.length} 笔 / {PENDING_ORDERS.reduce((s, o) => s + o.quantity, 0)} 吨
+                    共 {pendingOrders.length} 笔 / {pendingOrders.reduce((s, o) => s + o.quantity, 0)} 吨
                   </span>
                 </div>
-                {PENDING_ORDERS.map(order => (
+                {pendingOrders.map(order => (
                   <div key={order.id}
                     style={{
                       padding: '12px 16px',
